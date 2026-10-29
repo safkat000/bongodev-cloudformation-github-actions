@@ -10,4 +10,4 @@
 - [ ] Screenshot: deleted stack / cleanup confirmation.
 - [ ] Two sentences explaining what GitHub Actions does and what CloudFormation does.
 
-Do not submit AWS access keys, session tokens, `.aws/credentials`, private SSH keys, or a trust policy with unnecessary wildcard principals. Never commit such material.
+Please Do not submit AWS access keys, session tokens, `.aws/credentials`, private SSH keys, or a trust policy with unnecessary wildcard principals. Never commit such material.
