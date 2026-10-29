@@ -1,455 +1,395 @@
-# bongoDev Homework: Automate AWS Infrastructure as Code with GitHub Actions
+# Automated AWS Infrastructure as Code with GitHub Actions CI/CD
 
-> **Purpose of this lab - read this first**
->
-> In the previous CloudFormation lab, you uploaded a YAML file manually to create a new **Ubuntu 24.04 LTS EC2 instance running Nginx**. The goal of this homework is to **remove the manual CloudFormation deployment step**.
->
-> You will put your infrastructure code in a GitHub repository, configure a **GitHub Actions CI/CD workflow**, and securely connect GitHub to AWS using **OpenID Connect (OIDC)**. From then on, when you push a relevant change to the `main` branch, GitHub Actions will **validate the CloudFormation template and automatically create or update your AWS stack**.
->
-> This exercise teaches a real DevOps practice: **Git as the source of truth for infrastructure, automated deployments, repeatable environments, and short-lived cloud credentials**. GitHub Actions runs the pipeline; CloudFormation provisions the resources; Ubuntu installs and runs Nginx.
+[![CI/CD Pipeline](https://img.shields.io/badge/CI%2FCD-GitHub%20Actions-blue?logo=github-actions&logoColor=white)](.github/workflows/deploy.yml)
+[![Infrastructure as Code](https://img.shields.io/badge/IaC-AWS%20CloudFormation-orange?logo=amazon-aws&logoColor=white)](cloudformation.yaml)
+[![Cloud Provider](https://img.shields.io/badge/Cloud-AWS-232F3E?logo=amazon-aws&logoColor=white)](https://aws.amazon.com/)
+[![OS](https://img.shields.io/badge/OS-Ubuntu%2024.04%20LTS-E95420?logo=ubuntu&logoColor=white)](https://ubuntu.com/)
+[![Web Server](https://img.shields.io/badge/Server-Nginx-009639?logo=nginx&logoColor=white)](https://nginx.org/)
+[![Security](https://img.shields.io/badge/Security-OIDC%20Keyless%20Auth-green?logo=openid&logoColor=white)](iam/)
 
-**Assignment type:** Individual student homework  
-**Estimated duration:** 45–75 minutes (first-time IAM/OIDC setup can take longer)  
-**Level:** Beginner–intermediate DevOps  
-**AWS environment:** Your own *sandbox/learning* account (not an employer production account)
+> **Portfolio Project**  
+> **Author:** [Safkat Hossain](https://github.com/safkat000)  
+> **Repository:** [`safkat000/bongodev-cloudformation-github-actions`](https://github.com/safkat000/bongodev-cloudformation-github-actions)  
 
-> ⚠️ **COST AND SECURITY WARNING:** This homework creates real AWS billable resources (EC2 instance, EBS storage, public IPv4 address, etc.). Follow **Step 11 - Cleanup** after taking screenshots. The Nginx demo uses **HTTP port 80** so it is **not production-ready**. Do not store AWS access keys in GitHub or commit credentials to the repository.
 
 ---
 
-## 1. What you will achieve
+## Executive Summary & Architecture Overview
 
-By the end of this homework, you will be able to:
+This project implements an end-to-end **GitOps continuous delivery (CI/CD) pipeline** that automates the provisioning and lifecycle management of cloud infrastructure on Amazon Web Services (AWS). 
 
-1. Explain why **GitHub Actions + CloudFormation** is useful for IaC.
-2. Create a GitHub repository and version-control your CloudFormation YAML.
-3. Establish secure **GitHub → AWS** access with IAM + OIDC, not permanent access keys.
-4. Configure a GitHub Actions workflow that automatically runs on a push to `main`.
-5. Provision an Ubuntu EC2 instance, VPC, subnet, routing, security group and Nginx site **without using Launch Instance in the EC2 console**.
-6. Make a safe infrastructure change, push it, and observe an **update to the same stack**.
-7. Provide proof of your automation and clean up the AWS resources.
+Instead of manual resource creation through the AWS Management Console or risky local CLI deployments, this repository establishes **Git as the single source of truth** for cloud infrastructure. Pushing code changes to the `main` branch automatically triggers GitHub Actions to validate and reconcile AWS resources via **AWS CloudFormation**.
 
-### Architecture
+A cornerstone of this implementation is **zero-trust, keyless cloud authentication**. By establishing an **OpenID Connect (OIDC)** identity federation between GitHub Actions and AWS Identity and Access Management (IAM), the deployment pipeline assumes an IAM role dynamically using short-lived security tokens. **No long-lived AWS access keys (`AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`) are stored or exposed.**
 
 ```text
-Your computer / VS Code
-        |
-        | git add -> git commit -> git push origin main
-        v
-GitHub repository (cloudformation.yaml + .github/workflows/deploy.yml)
-        |
-        | push triggers workflow
-        v
-GitHub Actions runner (ubuntu-latest)
-        |  checkout repository
-        |  assume IAM role through OIDC (short-lived credentials)
-        |  aws cloudformation validate-template
-        |  aws cloudformation deploy
-        v
-AWS CloudFormation stack: bongodev-github-iac-dev
-        |
-        +--> VPC + public subnet + IGW + route table
-        +--> Security group (HTTP/80 only; no inbound SSH)
-        +--> Ubuntu 24.04 EC2 (t3.micro)
-                   |
-                   | EC2 User Data: apt-get install nginx
-                   v
-             Nginx web page: Hello from bongoDev!
+Developer (VS Code / Terminal)
+        │
+        │  git push origin main
+        ▼
+GitHub Repository (safkat000/bongodev-cloudformation-github-actions)
+        │
+        │  Trigger on push to: cloudformation.yaml, .github/workflows/deploy.yml
+        ▼
+GitHub Actions Runner (ubuntu-latest)
+        │  1. Checkout code
+        │  2. Exchange GitHub OIDC JWT with AWS STS for temporary credentials
+        │  3. Verify caller identity (aws sts get-caller-identity)
+        │  4. Validate syntax & schema (aws cloudformation validate-template)
+        │  5. Deploy / Reconcile stack (aws cloudformation deploy)
+        ▼
+AWS CloudFormation Stack: bongodev-github-iac-dev (Region: us-west-2)
+        │
+        ├── AWS::EC2::VPC ("DemoVPC" - 10.42.0.0/16)
+        ├── AWS::EC2::Subnet ("PublicSubnet" - 10.42.1.0/24, MapPublicIpOnLaunch)
+        ├── AWS::EC2::InternetGateway & VPCGatewayAttachment
+        ├── AWS::EC2::RouteTable & DefaultRoute (0.0.0.0/0 via IGW)
+        ├── AWS::EC2::SecurityGroup ("WebSecurityGroup" - Inbound HTTP/80)
+        └── AWS::EC2::Instance ("UbuntuNginxServer" - Ubuntu 24.04 LTS t3.micro)
+                 │
+                 └── EC2 User Data bootstrap:
+                       ├── apt-get update & apt-get install nginx
+                       ├── Deploy custom HTML site
+                       └── systemctl enable --now nginx
 ```
 
-**Important:** Pushing again does **not** necessarily create another instance. CloudFormation will create a stack if it does not exist and update the existing stack if it does. A harmless tag update usually preserves the existing instance. Some other changes can cause replacement.
+---
+
+## Project Verification & Submission Checklist
+
+All milestones specified in the [Submission Checklist](docs/student-submission-checklist.md) have been successfully accomplished and validated against AWS:
+
+| Milestone / Requirement | Status | Evidence / Reference |
+|---|:---:|---|
+| GitHub repository containing `cloudformation.yaml` and `.github/workflows/deploy.yml` | Completed | [`cloudformation.yaml`](cloudformation.yaml), [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml) |
+| Successful initial GitHub Actions workflow (green check, OIDC exchange, stack create) | Completed | [Screenshot 02](#1-github-actions-initial-deployment) |
+| CloudFormation stack `bongodev-github-iac-dev` in `CREATE_COMPLETE` / `UPDATE_COMPLETE` | Completed | [Screenshot 03](#2-cloudformation-stack-provisioned) & [Screenshot 07](#6-github-actions-second-push-update) |
+| Running Ubuntu 24.04 EC2 instance in custom VPC with tags | Completed | [Screenshot 04](#3-ubuntu-ec2-instance-running) |
+| Live Nginx website serving `Hello from bongoDev!` in `Environment: dev` | Completed | [Screenshot 05](#4-live-nginx-web-server-response) |
+| GitHub commit URL modifying EC2 `Course` tag triggering automated deployment | Completed | Commit [`3c988a0`](https://github.com/safkat000/bongodev-cloudformation-github-actions/commit/3c988a0f446712596f406b266ee8af4aa50e799d) & [Screenshot 06](#5-iac-code-change-second-push) |
+| Verification of modified `Course` tag in EC2 console after automated stack update | Completed | [Screenshot 08](#7-verified-ec2-tag-update) |
+| Clean teardown and stack deletion confirmation | Completed | [Screenshot 09](#8-stack-deletion-in-progress) & [Screenshot 10](#9-complete-stack-deletion--cleanup) |
+| Deep-dive technical explanations (GitHub Actions vs. CloudFormation, OIDC security) | Completed | [Section: Technical Deep Dive & Q&A](#technical-deep-dive--architectural-questions) |
 
 ---
 
-## 2. Files included in this ZIP
+## Visual Implementation Showcase
+
+Below is the chronological visual evidence documenting the deployment, live verification, infrastructure update, and cleanup phases.
+
+### 1. GitHub Actions Initial Deployment
+The initial push to the repository triggered the pipeline. GitHub Actions authenticated via OIDC, validated the template, and executed `aws cloudformation deploy`, creating all resources automatically without any manual AWS console interaction.
+
+<p align="center">
+  <img src="Screenshots/02.Github Action Successful.png" alt="GitHub Actions Initial Deployment Successful" width="90%" />
+</p>
+
+---
+
+### 2. CloudFormation Stack Provisioned
+In the AWS CloudFormation Console (`us-west-2`), the stack `bongodev-github-iac-dev` reached `CREATE_COMPLETE`, outputting the VPC ID, public IP address, instance ID, and website URL.
+
+<p align="center">
+  <img src="Screenshots/03.CloudFormation Stack.png" alt="CloudFormation Stack CREATE_COMPLETE" width="90%" />
+</p>
+
+---
+
+### 3. Ubuntu EC2 Instance Running
+The `t3.micro` EC2 instance launched inside the dedicated VPC (`10.42.0.0/16`) and public subnet (`10.42.1.0/24`), powered by Canonical's official Ubuntu 24.04 LTS AMI resolved dynamically via AWS SSM Parameter Store.
+
+<p align="center">
+  <img src="Screenshots/04.Ubuntu EC2 Instance.png" alt="Ubuntu EC2 Instance in AWS Console" width="90%" />
+</p>
+
+---
+
+### 4. Live Nginx Web Server Response
+Navigating to the instance's public IPv4 address renders the custom web page bootstrapped automatically by the EC2 User Data script during first launch.
+
+<p align="center">
+  <img src="Screenshots/05.Nginx Result.png" alt="Live Nginx Website" width="90%" />
+</p>
+
+---
+
+### 5. IaC Code Change (Second Push)
+To demonstrate continuous deployment and CloudFormation's update mechanics, the EC2 instance tag was updated in `cloudformation.yaml` from `bongoDev-DevOps` to `bongoDev-DevOps-Homework-V2` and committed to `main` ([Commit 3c988a0](https://github.com/safkat000/bongodev-cloudformation-github-actions/commit/3c988a0f446712596f406b266ee8af4aa50e799d)).
+
+<p align="center">
+  <img src="Screenshots/06.Modified EC2 Tag.png" alt="Modified EC2 Tag Git Commit" width="90%" />
+</p>
+
+---
+
+### 6. GitHub Actions Second Push (Update)
+The second push triggered the workflow once again. Instead of failing or attempting to duplicate the infrastructure, CloudFormation generated a changeset and applied an in-place update to the running stack.
+
+<p align="center">
+  <img src="Screenshots/07.Update After 2nd Push.png" alt="GitHub Actions Pipeline Updating Stack" width="90%" />
+</p>
+
+---
+
+### 7. Verified EC2 Tag Update
+Checking the EC2 instance properties in the AWS Console confirmed that the `Course` tag updated to `bongoDev-DevOps-Homework-V2` while preserving the exact same instance ID without downtime or recreation.
+
+<p align="center">
+  <img src="Screenshots/08.EC2 Tag Is Modified.png" alt="EC2 Tag Updated to bongoDev-DevOps-Homework-V2" width="90%" />
+</p>
+
+---
+
+### 8. Stack Deletion in Progress
+Following verification, the stack deletion was initiated to clean up all allocated AWS billable resources (VPC, IGW, Route Table, Security Group, EC2 instance, EBS volumes, and public IP).
+
+<p align="center">
+  <img src="Screenshots/09.Stack Deletion In Progress.png" alt="CloudFormation Stack Deletion in Progress" width="90%" />
+</p>
+
+---
+
+### 9. Complete Stack Deletion & Cleanup
+All resources provisioned by the IaC template were cleanly terminated, leaving no orphaned resources or lingering costs.
+
+<p align="center">
+  <img src="Screenshots/10.Stack Deleted.png" alt="CloudFormation Stack Cleanup Confirmed" width="90%" />
+</p>
+
+---
+
+### 10. Repository Workspace Setup
+Local development environment and repository structure showing tracked IaC files, workflows, IAM policies, and documentation.
+
+<p align="center">
+  <img src="Screenshots/01.Git Repo.png" alt="Repository Workspace Structure" width="90%" />
+</p>
+
+---
+
+## Technical Deep Dive & Architectural Questions
+
+### 1. What is the fundamental difference between GitHub Actions and AWS CloudFormation?
+* **GitHub Actions** is a **CI/CD orchestration engine**. It automates the pipeline lifecycle: responding to Git triggers, spinning up ephemeral virtual runners, running linting/validation tests, negotiating credentials with external identity providers, and executing CLI commands. It does not natively manage AWS resource states.
+* **AWS CloudFormation** is an **Infrastructure as Code (IaC) provisioning and state engine**. It takes declarative templates describing the desired cloud state and handles dependency graph resolution, resource provisioning, change sets, rollbacks on failure, and state tracking directly within the AWS control plane.
+* **Synthesis:** GitHub Actions *orchestrates the delivery workflow*, while CloudFormation *executes and manages the cloud infrastructure state*.
+
+### 2. Why can a `git push` deploy infrastructure without anyone logging into the AWS Console?
+Because GitHub Actions leverages **federated authentication via OpenID Connect (OIDC)**. When a commit is pushed to `main`, GitHub Actions requests a signed JSON Web Token (JWT) from GitHub's OIDC token service (`token.actions.githubusercontent.com`). The workflow presents this token to AWS Security Token Service (STS) using `AssumeRoleWithWebIdentity`. AWS validates the token signature against GitHub's public keys and checks the IAM role's trust policy. Once validated, AWS STS issues temporary security credentials (session token, access key ID, and secret access key) scoped exclusively to that workflow run, allowing it to invoke CloudFormation APIs directly.
+
+### 3. What does OIDC do, and why is it safer than committing static AWS access keys?
+* **Elimination of Long-Lived Secrets:** Traditional CI/CD stored permanent `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` pairs in GitHub Secrets. If leaked, stolen, or accidentally printed in build logs, attackers gain indefinite access until keys are revoked.
+* **Short-Lived Ephemeral Credentials:** OIDC produces temporary AWS credentials valid only for the duration of the job (e.g., 15–60 minutes), after which they expire automatically.
+* **Cryptographic Trust Conditions:** The AWS IAM trust policy explicitly validates the claims inside the GitHub token:
+  * `aud`: Ensures the token was minted specifically for `sts.amazonaws.com`.
+  * `sub`: Matches the exact repository, numeric owner ID, numeric repository ID, and Git branch (`repo:safkat000@.../bongodev-cloudformation-github-actions@...:ref:refs/heads/main`). No other repository, fork, or branch can assume the role.
+
+### 4. On a second push, why is the existing stack updated instead of creating a new one?
+The deployment workflow executes `aws cloudformation deploy --stack-name bongodev-github-iac-dev`. The `deploy` command is **idempotent**:
+* If a stack with that name does not exist, CloudFormation creates it.
+* If a stack with that name already exists, CloudFormation calculates a **Change Set** (the differential between the current state and the newly submitted template) and applies only the required updates in-place.
+* The `--no-fail-on-empty-changeset` flag ensures that if a run contains no infrastructure changes, the workflow gracefully exits with success instead of throwing an error.
+
+### 5. Is CloudFormation stack creation complete always the same as Nginx ready? Why not?
+No. CloudFormation marks an `AWS::EC2::Instance` resource as `CREATE_COMPLETE` as soon as AWS finishes provisioning the virtual machine, allocating network interfaces, and signaling to the hypervisor that the instance is booted. 
+
+However, **EC2 User Data scripts execute asynchronously inside the guest OS** during the initial boot via `cloud-init`. The package manager (`apt-get update`, `apt-get install nginx`) and web server daemon startup take additional time (typically 1–3 minutes) after CloudFormation reports `CREATE_COMPLETE`. To guarantee synchronization in enterprise setups, one would use `cfn-signal` and a CloudFormation `CreationPolicy`.
+
+### 6. Why does this project update an EC2 tag instead of modifying the webpage HTML to demonstrate updates?
+EC2 User Data scripts only execute **once on the initial launch** of an instance by default. If you edit the `UserData` block in an existing CloudFormation template, CloudFormation will update the instance metadata, but **the running Ubuntu OS will not rerun the bootstrap script**. Updating the HTML would therefore not reflect on the live website unless the instance is terminated and replaced.
+
+Updating a resource tag (such as `Course: bongoDev-DevOps-Homework-V2`) safely tests the IaC reconciliation engine because:
+* CloudFormation recognizes the tag diff in its Change Set.
+* It applies the tag update directly via the EC2 API without causing service disruption or instance replacement (`Update requires: No interruption`).
+
+### 7. What should happen to AWS resources when testing and verification are complete?
+In any cloud DevOps workflow, non-production test environments must be promptly decommissioned to enforce **cost governance** and **security hygiene**:
+* Prevent continuous billing for compute instances (`t3.micro`), public IPv4 addresses, and EBS gp3 storage volumes.
+* Eliminate abandoned attack surfaces (e.g., exposed HTTP port 80).
+* Ensure that the IaC templates are truly reproducible from scratch at any time.
+
+---
+
+## Repository Architecture & Directory Structure
 
 ```text
-task-IAC-with-CloudFormation/
-├── README.md                            <-- these step-by-step instructions
-├── cloudformation.yaml                  <-- Ubuntu + Nginx + networking IaC
+bongodev-cloudformation-github-actions/
+├── README.md                            <-- Project documentation & portfolio presentation
+├── cloudformation.yaml                  <-- Declarative AWS IaC template (VPC, EC2, Nginx)
 ├── .github/
 │   └── workflows/
-│       └── deploy.yml                   <-- automation workflow
+│       └── deploy.yml                   <-- GitHub Actions CI/CD automation workflow
 ├── iam/
-│   ├── deployment-policy-lab.json       <-- classroom deployment permissions
-│   ├── trust-policy-new-repos-2026.json <-- use for new GitHub repositories
-│   └── trust-policy-legacy-repos.json   <-- fallback for older repositories
+│   ├── deployment-policy-lab.json       <-- Scoped IAM deployment permissions policy
+│   ├── trust-policy-new-repos-2026.json <-- OIDC trust policy for modern GitHub repositories
+│   └── trust-policy-legacy-repos.json   <-- Fallback OIDC trust policy for legacy repositories
 ├── docs/
-│   └── student-submission-checklist.md
+│   └── student-submission-checklist.md  <-- Verified course submission requirements
+├── Screenshots/                         <-- Photographic proof of deployment and verification
+│   ├── 01.Git Repo.png
+│   ├── 02.Github Action Successful.png
+│   ├── 03.CloudFormation Stack.png
+│   ├── 04.Ubuntu EC2 Instance.png
+│   ├── 05.Nginx Result.png
+│   ├── 06.Modified EC2 Tag.png
+│   ├── 07.Update After 2nd Push.png
+│   ├── 08.EC2 Tag Is Modified.png
+│   ├── 09.Stack Deletion In Progress.png
+│   └── 10.Stack Deleted.png
 └── .gitignore
 ```
 
-**Do not delete `.github/workflows/deploy.yml`.** The `.github` directory is hidden by some file managers. On macOS Finder, use **Command + Shift + .** to reveal hidden files. In a terminal, run `ls -la`.
+---
 
-### What `cloudformation.yaml` creates
+## Infrastructure as Code Specification (`cloudformation.yaml`)
 
-| AWS resource | Purpose |
-|---|---|
-| `DemoVPC` | VPC `10.42.0.0/16` |
-| `PublicSubnet` | Public subnet `10.42.1.0/24` |
-| Internet gateway + route table | Internet access for installing and serving Nginx |
-| `WebSecurityGroup` | Public inbound TCP **80** for this training site |
-| `UbuntuNginxServer` | Ubuntu 24.04 LTS EC2 of type `t3.micro` |
-| EC2 `UserData` | Automatically runs Ubuntu `apt-get` and starts Nginx |
-| Stack outputs | `WebsiteURL`, `InstanceId`, `PublicIPAddress`, `VpcId` |
+The template defines a complete networking stack and application server:
 
-The template uses Canonical's AWS public SSM parameter for a current Ubuntu 24.04 AMI (no region-specific AMI ID to copy). Versions can differ across deployments at different times; for a strictly reproducible production build you would pin the AMI and package versions.
+| Resource Logical ID | AWS Resource Type | Configuration & Purpose |
+|---|---|---|
+| `DemoVPC` | `AWS::EC2::VPC` | Dedicated VPC with CIDR `10.42.0.0/16`, DNS support and hostnames enabled. |
+| `InternetGateway` | `AWS::EC2::InternetGateway` | Provides internet ingress and egress for the VPC. |
+| `GatewayAttachment` | `AWS::EC2::VPCGatewayAttachment` | Attaches the Internet Gateway to `DemoVPC`. |
+| `PublicSubnet` | `AWS::EC2::Subnet` | Public subnet with CIDR `10.42.1.0/24`, configured with `MapPublicIpOnLaunch: true`. |
+| `PublicRouteTable` | `AWS::EC2::RouteTable` | Custom routing table for public subnets. |
+| `DefaultRoute` | `AWS::EC2::Route` | Route directing outbound `0.0.0.0/0` traffic to the Internet Gateway. |
+| `PublicRouteAssociation` | `AWS::EC2::SubnetRouteTableAssociation` | Associates `PublicSubnet` with `PublicRouteTable`. |
+| `WebSecurityGroup` | `AWS::EC2::SecurityGroup` | Inbound TCP port 80 allowed for HTTP traffic. Zero SSH ingress for improved security. |
+| `UbuntuNginxServer` | `AWS::EC2::Instance` | `t3.micro` EC2 instance with IMDSv2 enforced (`HttpTokens: required`). AMI dynamically queried from Canonical's official SSM parameter `/aws/service/canonical/ubuntu/server/noble/stable/current/amd64/hvm/ebs-gp3/ami-id`. |
+| `UserData` | Bash Script | Automates `apt-get` updates, installs Nginx, writes custom HTML, and enables the systemd service. |
+
+### Stack Outputs
+* `WebsiteURL`: Direct HTTP link to the live Nginx website (`http://${PublicIp}`).
+* `InstanceId`: Physical ID of the provisioned EC2 instance.
+* `PublicIPAddress`: Public IPv4 address assigned to the instance.
+* `VpcId`: Physical ID of the provisioned VPC.
 
 ---
 
-## 3. Prerequisites and preparation
+## CI/CD Pipeline Implementation (`deploy.yml`)
 
-You need:
-
-- A **GitHub account** (https://github.com/).
-- An **AWS account** with permission to create IAM identity providers, IAM roles and policies, CloudFormation stacks, EC2 and VPC resources. Ask your teacher/administrator if your account is restricted.
-- **Git** installed (`git --version`) and an editor such as VS Code.
-- A terminal (macOS Terminal, Linux shell or Windows Git Bash).
-- A GitHub authentication method for `git push` (e.g. GitHub CLI login or Git Credential Manager). **GitHub account passwords are not accepted for HTTPS git pushes.**
-- A learning/sandbox AWS account with a suitable EC2 service quota. Confirm you understand costs.
-
-For this assignment use:
-
-| Setting | Value |
-|---|---|
-| GitHub repository name | `bongodev-cloudformation-github-actions` |
-| Git branch | `main` |
-| AWS region | `us-west-2` (N. Virginia; choose another supported region if needed) |
-| IAM role name | `bongodev-github-iac-deploy-role` |
-| IAM policy name | `bongodev-github-iac-lab-policy` |
-| AWS CloudFormation stack | `bongodev-github-iac-dev` |
-| CloudFormation environment parameter | `dev` |
-
-You will replace placeholders such as `<AWS_ACCOUNT_ID>`, `<GITHUB_OWNER>`, `<OWNER_ID>` and `<REPO_ID>` with *your own* values. **Do not include literal `<` or `>` in the final AWS trust policy.**
-
-**Why set up IAM before the first push?** Your first push containing `deploy.yml` can automatically start a deployment. Setting up AWS access and GitHub variables first prevents avoidable failures.
-
----
-
-## 4. Step 1 - Create an EMPTY GitHub repository
-
-1. Sign in at https://github.com/new.
-2. Set **Repository name** to `bongodev-cloudformation-github-actions`.
-3. Choose **Public** for the easiest homework setup (the project contains no keys or secrets). You can use a private repository if you know how to authenticate GitHub CLI/API queries.
-4. **Do not** select *Add a README file*, *Add .gitignore* or *Choose a license*. Create an **empty** repository.
-5. Click **Create repository**.
-6. Record your repository's **owner name**, **repository name**, and full URL:
-
-   `https://github.com/<GITHUB_OWNER>/bongodev-cloudformation-github-actions`
-
-> A repository created today uses GitHub's newer **immutable OIDC subject** format. Do not blindly copy older tutorials using only `repo:OWNER/REPO:ref:refs/heads/main`.
-
----
-
-## 5. Step 2 - Find your GitHub owner ID and repository ID (important in 2026)
-
-**Why?** GitHub repositories created on or after **July 15, 2026** normally put the *numeric owner and repository IDs* into the OIDC subject claim. AWS IAM must trust the **exact** subject your workflow will present.
-
-For a **public repository**, open this URL in your browser (replace the names):
-
-```text
-https://api.github.com/repos/<GITHUB_OWNER>/bongodev-cloudformation-github-actions
-```
-
-You'll see JSON. Find:
-
-- Top-level `"id"` → this is **`REPO_ID`**.
-- Inside the `"owner"` object, find its `"id"` → this is **`OWNER_ID`**.
-- `"owner"."login"` → GitHub account or organization name (`GITHUB_OWNER`).
-- Top-level `"name"` → repository name (`REPO_NAME`).
-
-If you already use GitHub CLI, you can get the exact identity prefix for any accessible repository (including private repos):
-
-```bash
-gh api repos/<GITHUB_OWNER>/bongodev-cloudformation-github-actions \
-  --jq '"\(.owner.login)@\(.owner.id)/\(.name)@\(.id)"'
-```
-
-For example, if your GitHub owner is `student123`, owner ID `112233` and repository ID `778899`, the complete subject is:
-
-```text
-repo:student123@112233/bongodev-cloudformation-github-actions@778899:ref:refs/heads/main
-```
-
-**Your actual numeric values will be different.** Make sure this matches `main` and not a different branch. The example IDs are fictitious.
-
-**Older GitHub repositories:** A repository created before July 15, 2026 *might* use the previous subject format without IDs. For those only, use `iam/trust-policy-legacy-repos.json`. New repositories should use `iam/trust-policy-new-repos-2026.json`.
-
----
-
-## 6. Step 3 - Add the GitHub OIDC identity provider in AWS IAM
-
-1. Sign in to https://console.aws.amazon.com/iam/.
-2. In the left navigation, choose **Identity providers**.
-3. Select **Add provider**.
-4. For **Provider type**, select **OpenID Connect**.
-5. For **Provider URL**, enter exactly:
-
-   `https://token.actions.githubusercontent.com`
-
-6. For **Audience**, enter exactly:
-
-   `sts.amazonaws.com`
-
-7. Add/create the provider. If an identical GitHub provider **already exists** in your account, use it; do not create a duplicate.
-
-**Explain it:** AWS will accept a GitHub-issued OIDC token that meets the IAM role's trust policy and issue **temporary AWS credentials**. We do **not** store AWS access keys in GitHub Secrets or files.
-
----
-
-## 7. Step 4 - Create permissions policy and IAM deployment role
-
-### 4A. Create a customer-managed IAM policy
-
-1. In **IAM → Policies**, select **Create policy**.
-2. Choose the **JSON** editor.
-3. Open `iam/deployment-policy-lab.json` in VS Code and copy **the entire JSON** into the IAM policy editor.
-4. Review the JSON, continue, and name the policy `bongodev-github-iac-lab-policy`.
-5. Select **Create policy**.
-
-**Security explanation:** The permissions cover the CloudFormation operations, public Ubuntu AMI parameter lookup, and EC2/VPC resources needed in this lab. The EC2 create/delete actions use `Resource: "*"` for classroom simplicity, so this is **not a tightly scoped production IAM policy**. Use it only in an isolated sandbox AWS account, and delete it after the homework. For production, restrict actions to allowed resources/tags, use CloudFormation service roles, approvals, protected branches, and organization security policies.
-
-### 4B. Create a role GitHub Actions can assume
-
-1. In **IAM → Roles**, choose **Create role**.
-2. Select **Web identity** (the wizard may label it **Federated identity** depending on the console layout).
-3. Select the existing GitHub OIDC identity provider: `token.actions.githubusercontent.com`.
-4. Select audience `sts.amazonaws.com`.
-5. If AWS asks for GitHub organization/repository/branch fields, enter your GitHub owner, repository, and `main`. **We will explicitly review and replace the trust policy afterward.**
-6. Continue to the permissions screen, attach the policy `bongodev-github-iac-lab-policy`.
-7. Set role name `bongodev-github-iac-deploy-role`; create it.
-8. Open the new role, select **Trust relationships**, and choose **Edit trust policy**.
-9. Open `iam/trust-policy-new-repos-2026.json`. Replace these exact placeholders:
-
-   - `<AWS_ACCOUNT_ID>` → your **12-digit AWS account ID** (visible in the AWS console account menu).
-   - `<GITHUB_OWNER>` → your GitHub username/organization name.
-   - `<OWNER_ID>` → numeric ID from Step 2.
-   - `<REPO_NAME>` → `bongodev-cloudformation-github-actions`.
-   - `<REPO_ID>` → numeric ID from Step 2.
-
-10. Paste the completed JSON into **Edit trust policy**, verify the values, and **Save changes**.
-
-The critical trust condition will look **similar** to the following (fake example IDs):
-
-```json
-"Condition": {
-  "StringEquals": {
-    "token.actions.githubusercontent.com:aud": "sts.amazonaws.com",
-    "token.actions.githubusercontent.com:sub": "repo:student123@112233/bongodev-cloudformation-github-actions@778899:ref:refs/heads/main"
-  }
-}
-```
-
-The policy must also contain a `Federated` principal pointing to **your** AWS account's GitHub OIDC provider. Do not paste only the snippet above; use the complete JSON file.
-
-**If your repo uses the older non-ID subject:** Use `iam/trust-policy-legacy-repos.json` instead, replacing account, owner and repo values. **Do not open trust to all branches or all GitHub repositories with a wildcard.**
-
-### 4C. Copy the role ARN
-
-From the IAM role's **Summary**, copy the **Role ARN**, for example:
-
-```text
-arn:aws:iam::123456789012:role/bongodev-github-iac-deploy-role
-```
-
-This is a role identifier, **not an AWS access key**. Save it for the next step. Your AWS account number and role ARN should still be handled carefully when sharing publicly.
-
----
-
-## 8. Step 5 - Configure repository variables in GitHub
-
-1. Open your GitHub repository.
-2. Select **Settings → Secrets and variables → Actions**.
-3. Choose the **Variables** tab (not Secrets).
-4. Create these **repository variables**:
-
-| Name | Value |
-|---|---|
-| `AWS_ROLE_ARN` | Your IAM role ARN from Step 4C |
-| `AWS_REGION` | `us-west-2` (or the region you chose) |
-
-5. Double-check the spelling. `AWS_ROLE_ARN` and `AWS_REGION` must match the workflow's `${{ vars.NAME }}` references.
-
-**Why variables and not secrets?** These are configuration identifiers, not permanent credentials. OIDC provides short-lived credentials automatically at execution time. **Do not create `AWS_ACCESS_KEY_ID` or `AWS_SECRET_ACCESS_KEY` in this lab.**
-
----
-
-## 9. Step 6 - Push the downloaded project to GitHub
-
-### 6A. Extract and open the project
-
-Extract `task-IAC-with-CloudFormation.zip`. Open the **inner folder containing `README.md` and `cloudformation.yaml`** in VS Code and open a terminal in that folder. Make sure `.github/workflows/deploy.yml` is present.
-
-### 6B. Initialize Git and commit the files
-
-Run these commands from the project root:
-
-```bash
-git init
-git branch -M main
-git add .
-git commit -m "Add IaC and GitHub Actions automation"
-```
-
-If Git asks for a name and email, set them using `git config --global user.name "Your Name"` and `git config --global user.email "your-github-email"`, then retry the commit.
-
-### 6C. Connect Git to your GitHub repository
-
-Change `<GITHUB_OWNER>` to your username or organization:
-
-```bash
-git remote add origin https://github.com/<GITHUB_OWNER>/bongodev-cloudformation-github-actions.git
-git push -u origin main
-```
-
-Your git client might open a browser to authenticate. Sign in to GitHub using the supported authentication prompt/Git Credential Manager or `gh auth login` first. Do **not** put your GitHub password in the terminal.
-
-**Checkpoint:** In GitHub's **Code** tab, you should see `README.md`, `cloudformation.yaml`, `iam/`, `docs/`, and `.github/workflows/deploy.yml` (open the `.github` directory if necessary).
-
-**Why does this trigger a deploy?** The workflow contains:
+The automation workflow is defined in [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml):
 
 ```yaml
+name: Deploy Ubuntu Nginx with CloudFormation
+
 on:
   push:
-    branches: [main]
+    branches:
+      - main
     paths:
       - cloudformation.yaml
       - .github/workflows/deploy.yml
   workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: bongodev-cloudformation-dev
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Validate and deploy infrastructure
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      STACK_NAME: bongodev-github-iac-dev
+      AWS_REGION: ${{ vars.AWS_REGION }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure temporary AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v6.3.0
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          role-session-name: bongodev-iac-lab
+
+      - name: Confirm AWS identity
+        run: aws sts get-caller-identity --query '{Account:Account,Arn:Arn}' --output json
+
+      - name: Validate CloudFormation template
+        run: aws cloudformation validate-template --template-body file://cloudformation.yaml --region "$AWS_REGION"
+
+      - name: Create or update CloudFormation stack
+        run: |
+          aws cloudformation deploy \
+            --template-file cloudformation.yaml \
+            --stack-name "$STACK_NAME" \
+            --parameter-overrides Environment=dev \
+            --region "$AWS_REGION" \
+            --no-fail-on-empty-changeset
+
+      - name: Print website and infrastructure outputs
+        run: |
+          aws cloudformation describe-stacks \
+            --stack-name "$STACK_NAME" \
+            --region "$AWS_REGION" \
+            --query 'Stacks[0].Outputs[*].[OutputKey,OutputValue]' \
+            --output table
+
+      - name: Lab completion message
+        run: echo 'The stack is deployed. EC2 User Data may need additional minutes to install Nginx.'
 ```
 
-A push to `main` that adds/changes either of these files launches the pipeline. `workflow_dispatch` also permits a manual run. Changes only to the README usually will not trigger an automated deploy because of the `paths` filter.
+### Key Security & Operational Highlights
+1. **Concurrency Control:** `concurrency.group` guarantees that parallel pushes do not trigger simultaneous CloudFormation updates, preventing race conditions or stack locking conflicts (`UPDATE_IN_PROGRESS`).
+2. **Minimal GitHub Permissions:** Only `id-token: write` (for OIDC token acquisition) and `contents: read` are granted.
+3. **Template Pre-Validation:** Syntax and schema errors are caught via `aws cloudformation validate-template` before initiating changesets on AWS.
 
 ---
 
-## 10. Step 7 - Watch GitHub Actions automatically deploy Ubuntu + Nginx
+## Reproduction & Setup Guide
 
-1. In the GitHub repository, open **Actions**.
-2. Find the workflow **Deploy Ubuntu Nginx with CloudFormation**.
-3. Select the latest workflow run (triggered by your initial push).
-4. Open the job **Validate and deploy infrastructure**.
-5. Watch these steps:
+To replicate this deployment in your own AWS sandbox environment:
 
-   - **Checkout repository:** downloads your YAML into the runner.
-   - **Configure temporary AWS credentials (OIDC):** assumes the trusted AWS role.
-   - **Confirm AWS identity:** displays the temporary caller identity.
-   - **Validate CloudFormation template:** checks template validity using AWS.
-   - **Create or update CloudFormation stack:** provisions the infrastructure.
-   - **Print website and infrastructure outputs:** lists stack outputs, including the website URL.
+### Step 1: Configure IAM OpenID Connect Provider
+In **AWS IAM → Identity Providers**:
+* **Provider Type:** OpenID Connect
+* **Provider URL:** `https://token.actions.githubusercontent.com`
+* **Audience:** `sts.amazonaws.com`
 
-6. Wait for the workflow to complete with a green **success** status. Actual duration varies with AWS provisioning.
+### Step 2: Create IAM Policy & Deployment Role
+1. Create the customer-managed policy `bongodev-github-iac-lab-policy` using the JSON provided in [`iam/deployment-policy-lab.json`](iam/deployment-policy-lab.json).
+2. Create an IAM role named `bongodev-github-iac-deploy-role` with **Web Identity** federation pointing to the GitHub OIDC provider.
+3. Attach the permissions policy and edit the **Trust Policy** using [`iam/trust-policy-new-repos-2026.json`](iam/trust-policy-new-repos-2026.json), substituting your AWS Account ID, GitHub Owner, Owner ID, Repository Name, and Repository ID:
 
-**Very important:** You should **not** manually click *Create stack* in AWS. This is the core assignment: **GitHub Actions does the deployment for you.**
-
-### What the workflow actually runs
-
-Open `.github/workflows/deploy.yml` and locate this command:
-
-```bash
-aws cloudformation deploy \
-  --template-file cloudformation.yaml \
-  --stack-name "$STACK_NAME" \
-  --parameter-overrides Environment=dev \
-  --region "$AWS_REGION" \
-  --no-fail-on-empty-changeset
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": {
+        "Federated": "arn:aws:iam::<AWS_ACCOUNT_ID>:oidc-provider/token.actions.githubusercontent.com"
+      },
+      "Action": "sts:AssumeRoleWithWebIdentity",
+      "Condition": {
+        "StringEquals": {
+          "token.actions.githubusercontent.com:aud": "sts.amazonaws.com",
+          "token.actions.githubusercontent.com:sub": "repo:<GITHUB_OWNER>@<OWNER_ID>/<REPO_NAME>@<REPO_ID>:ref:refs/heads/main"
+        }
+      }
+    }
+  ]
+}
 ```
 
-`deploy` creates a new stack on the first deployment. On a later push, it updates that stack when template changes exist. `--no-fail-on-empty-changeset` treats a no-op deployment as success.
+### Step 3: Configure GitHub Repository Variables
+In your GitHub repository (**Settings → Secrets and variables → Actions → Variables**), create:
+* `AWS_ROLE_ARN`: `arn:aws:iam::<AWS_ACCOUNT_ID>:role/bongodev-github-iac-deploy-role`
+* `AWS_REGION`: `us-west-2`
 
-### Step 8 - Verify resources in AWS
+### Step 4: Deploy & Verify
+Push to `main`. GitHub Actions will automatically trigger, validate the CloudFormation template, provision the stack, and output the website URL.
 
-1. Go to https://console.aws.amazon.com/cloudformation/.
-2. Select the **same AWS region** that you configured in GitHub (`AWS_REGION`).
-3. Open **Stacks** and find `bongodev-github-iac-dev`.
-4. Confirm the stack shows **`CREATE_COMPLETE`** after the first successful deployment.
-5. Open **Resources** and locate the VPC, subnet, security group and EC2 instance.
-6. Open the **Outputs** tab and copy **`WebsiteURL`**.
-7. Paste the site URL in a browser, for example `http://YOUR-PUBLIC-IP`.
-8. Confirm the following content appears:
-
-```text
-Hello from bongoDev!
-Infrastructure as Code is working!
-Ubuntu 24.04 LTS + Nginx + AWS CloudFormation
-Environment: dev
-```
-
-9. In **EC2 → Instances**, confirm a running Ubuntu `t3.micro` and record its instance ID.
-
-**No SSH or EC2 key pair is needed.** EC2 **User Data** installs Nginx via `apt-get` on the new Ubuntu instance. CloudFormation `CREATE_COMPLETE` can happen before User Data finishes; if the site is not immediately available, investigate and retry.
-
-### Step 9 - Demonstrate that a SECOND push triggers an UPDATE
-
-Your task is to prove that **a Git change updates the same infrastructure**.
-
-1. In `cloudformation.yaml`, find the EC2 instance's tag:
-
-   ```yaml
-   - Key: Course
-     Value: bongoDev-DevOps
-   ```
-
-2. Change **only the tag value** to:
-
-   ```yaml
-   - Key: Course
-     Value: bongoDev-DevOps-Homework-V2
-   ```
-
-3. Save the file, then run:
-
-   ```bash
-   git add cloudformation.yaml
-   git commit -m "Update EC2 Course tag through IaC"
-   git push origin main
-   ```
-
-4. Open **GitHub → Actions** and watch the *new* workflow run.
-5. In AWS CloudFormation, observe the stack updating, then reaching **`UPDATE_COMPLETE`**.
-6. In **EC2 → Instances → your instance → Tags**, confirm:
-
-   `Course = bongoDev-DevOps-Homework-V2`
-
-7. Compare the before/after **Instance ID**. A tag-only update normally keeps the same EC2 instance.
-
-**Critical distinction:** Do not use editing the HTML inside EC2 User Data as the main update test. By default, the Ubuntu bootstrap script executes on the first launch only. Changing a User Data script in a template does **not** automatically rerun the website installation on an existing Ubuntu instance. For application changes in real projects, use a deployment mechanism such as an application pipeline, SSM automation, or instance replacement.
-
-### Optional extra experiment: Manually rerun the pipeline
-
-In **GitHub → Actions → Deploy Ubuntu Nginx with CloudFormation**, select **Run workflow** (on the `main` branch), then observe that the deployment can finish successfully even with **no template changes**.
-
----
-
-## 11. Step 10 - Submit your evidence BEFORE deleting resources
-
-Complete the [student submission checklist](docs/student-submission-checklist.md). Submit:
-
-1. Your GitHub repository URL and the commit URL for the **second push**.
-2. Screenshot of **successful GitHub Actions** runs (initial creation and second update).
-3. Screenshot of the **CloudFormation stack** (`CREATE_COMPLETE` / `UPDATE_COMPLETE`).
-4. Screenshot of the **Ubuntu EC2 instance and updated `Course` tag**.
-5. Screenshot of the live **Nginx website** showing `Hello from bongoDev!`.
-6. A short paragraph explaining **GitHub Actions vs CloudFormation** and why **OIDC** is preferred over long-lived AWS access keys.
-7. Confirmation that the stack was **deleted** after the evidence was captured.
-
-Do not submit access keys, credentials, private key files, or unnecessary personal/account details.
-
----
-
-## 12. Step 11 - MANDATORY cleanup (avoid AWS charges)
-
-**Do not leave the instance running after completing the lab.**
-
-1. Open **AWS CloudFormation → Stacks** in the same region used by the workflow.
-2. Select `bongodev-github-iac-dev`.
-3. Choose **Delete**, then confirm the deletion.
-4. Refresh **Events** and wait until the stack is removed or shows `DELETE_COMPLETE` in deleted stack history.
-5. Open **EC2 → Instances** and verify the lab EC2 instance is terminated. Confirm that the VPC and network resources created by the stack are no longer present. Investigate any `DELETE_FAILED` errors.
-6. In GitHub, **do not push the deployment YAML again** after cleanup, or the workflow may recreate the stack. If you still need to edit the repository, **disable the workflow** in the GitHub **Actions** tab first.
-7. After the course, delete the dedicated IAM role and classroom permissions policy when no longer needed. Do **not** delete a GitHub OIDC provider that another project in the account uses.
-
-You can also delete the stack with AWS CLI using *your own authorized local AWS credentials*:
-
+### Step 5: Clean Teardown
+To avoid unnecessary AWS cloud costs after verification:
 ```bash
 aws cloudformation delete-stack \
   --stack-name bongodev-github-iac-dev \
@@ -460,85 +400,27 @@ aws cloudformation wait stack-delete-complete \
   --region us-west-2
 ```
 
-**Note:** The `GitHub Actions` role in this lab is intended for deployment; it does **not** need stack deletion permission. Use your console user's permissions for cleanup.
+---
+
+## Troubleshooting Guide
+
+| Issue / Error | Root Cause | Solution |
+|---|---|---|
+| `Not authorized to perform sts:AssumeRoleWithWebIdentity` | Mismatched OIDC `sub` claim in IAM Trust Policy. | Modern repositories (post-July 2026) include numeric Owner ID and Repo ID in the subject claim. Verify the exact subject using `gh api repos/<OWNER>/<REPO> --jq '"\(.owner.login)@\(.owner.id)/\(.name)@\(.id)"'`. |
+| `AccessDenied` on `ec2:*` or `cloudformation:*` | IAM role missing lab deployment policy. | Verify `bongodev-github-iac-lab-policy` is attached to `bongodev-github-iac-deploy-role`. Check for SCP or permission boundary restrictions. |
+| Workflow does not trigger on commit | Changed files outside workflow trigger path. | The workflow filters on `cloudformation.yaml` and `.github/workflows/deploy.yml`. Changes exclusively to markdown files do not trigger deployments. Use **Run workflow** for manual testing. |
+| `WebsiteURL` times out (`ERR_CONNECTION_TIMED_OUT`) | EC2 User Data still installing Nginx or opening via HTTPS. | Ensure you are navigating via plain **HTTP** (`http://<IP>`). Wait 2–3 minutes for the `apt-get` bootstrap script to finish. Check `/var/log/bongodev-bootstrap.log`. |
+| CloudFormation enters `ROLLBACK_COMPLETE` | Resource provisioning error (e.g., subnet quota, AMI availability). | Inspect CloudFormation **Events** tab for the first failing resource. Delete the rolled-back stack before redeploying. |
 
 ---
 
-## 13. Troubleshooting (read the relevant symptom)
+## References & Official Documentation
 
-### Error: `Not authorized to perform sts:AssumeRoleWithWebIdentity`
-
-- First check **IAM → Role → Trust relationships**.
-- Verify `aud` is `sts.amazonaws.com`.
-- Verify AWS account ID, GitHub username, repo name, **owner ID**, **repo ID**, and `main` branch in `sub`.
-- **GitHub repositories created after July 15, 2026 use an immutable OIDC subject** with both numeric IDs (unless configured otherwise). Using the old name-only subject causes a mismatch.
-- Verify the IAM OIDC provider exists and `AWS_ROLE_ARN` points to the correct IAM role.
-- If you changed your repository name after setting up the trust policy, update the policy accordingly.
-
-### Error: `AccessDenied` for `ec2:*`, `cloudformation:*`, or `ssm:*`
-
-- Confirm `bongodev-github-iac-lab-policy` is attached to the **role** used by GitHub Actions.
-- Review the exact denied action and resource in the Actions logs / CloudFormation **Events** tab.
-- Check for organization Service Control Policies (SCPs), permission boundaries, region restrictions, or quotas: attaching a role policy cannot override them.
-- Do not solve this by granting `AdministratorAccess` to GitHub Actions.
-
-### Error: `AWS_ROLE_ARN` or AWS region missing / invalid
-
-- In GitHub **Settings → Secrets and variables → Actions → Variables**, make sure repository variables exist with *exact* names: `AWS_ROLE_ARN` and `AWS_REGION`.
-- Use a valid IAM role ARN, e.g. `arn:aws:iam::123456789012:role/bongodev-github-iac-deploy-role`.
-- Make sure the region supports the chosen EC2 instance type (`t3.micro`).
-
-### Workflow never starts
-
-- Verify file path is exactly **`.github/workflows/deploy.yml`**, inside the repo's `main` branch.
-- Check the repository **Actions** setting allows workflows and the workflow is enabled.
-- The default workflow responds only to `main` pushes changing the template/workflow. A README-only change **does not** trigger it.
-- Use **Actions → workflow → Run workflow** to perform a manual run after the file is on `main`.
-
-### Error: CloudFormation stack reaches `ROLLBACK_COMPLETE`
-
-- In AWS CloudFormation, inspect **Events** for the *first failing resource and error* (e.g. instance capacity, blocked AMI, insufficient EC2 permissions, restricted region, instance limits).
-- Fix the underlying issue, then delete the failed `ROLLBACK_COMPLETE` stack using your authorized console identity, and rerun the workflow.
-
-### Website is blank / `ERR_CONNECTION_TIMED_OUT` / site not yet available
-
-- Open the **HTTP** URL from stack Outputs, not HTTPS.
-- Ensure the stack's EC2 instance is `Running`, passed EC2 status checks, and has a public IPv4 address.
-- Confirm security group inbound **TCP port 80** from `0.0.0.0/0` for this lab.
-- Confirm public subnet routing to the Internet Gateway.
-- EC2 User Data needs time to run `apt-get` and install Nginx. `CREATE_COMPLETE` is not a guarantee of Nginx readiness.
-- If permitted to use AWS Systems Manager or another authorized diagnostic channel, check `/var/log/cloud-init-output.log` or `/var/log/bongodev-bootstrap.log`. No SSH ingress is configured in this lab.
-
-### Error: `No updates are to be performed`
-
-- The provided workflow uses `--no-fail-on-empty-changeset` and normally treats no changes as success.
-- To demonstrate an actual update, modify the **EC2 Course tag value** and push the YAML again.
+* [GitHub Actions: Configuring OpenID Connect in Amazon Web Services](https://docs.github.com/en/actions/how-tos/secure-your-work/security-harden-deployments/oidc-in-aws)
+* [AWS Configure AWS Credentials Action (`aws-actions/configure-aws-credentials`)](https://github.com/aws-actions/configure-aws-credentials)
+* [AWS CloudFormation CLI Deploy Reference](https://docs.aws.amazon.com/cli/latest/reference/cloudformation/deploy/index.html)
+* [Canonical: Ubuntu Server CloudFormation AMIs](https://ubuntu.com/aws/docs/aws-how-to/instances/build-cloudformation-templates/)
+* [AWS EC2 User Data & Shell Scripts](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/user-data.html)
 
 ---
 
-## 14. Questions to answer in your homework
-
-1. What is the difference between **GitHub Actions** and **AWS CloudFormation**?
-2. Why can a `git push` deploy infrastructure without anyone logging into the AWS console?
-3. What does **OIDC** do, and why is it safer than committing AWS access keys?
-4. On a second push, why is the existing stack **updated** instead of creating a new one?
-5. Is **CloudFormation stack creation complete** always the same as **Nginx ready**? Why not?
-6. Why does this homework update the **EC2 tag** instead of changing the webpage HTML?
-7. What should happen to AWS resources when you have finished the assignment?
-
-**Definition to remember:** *IaC = describe the desired infrastructure as code; GitHub Actions = run the deployment automation; CloudFormation = reconcile AWS resources to that template.*
-
----
-
-## 15. Official references (recommended reading)
-
-- GitHub Docs - [Configuring OIDC in AWS](https://docs.github.com/en/actions/how-tos/secure-your-work/security-harden-deployments/oidc-in-aws)
-- GitHub Docs - [Immutable subject claims for new repositories](https://docs.github.com/en/actions/reference/security/oidc#immutable-subject-claims)
-- AWS-maintained action - [aws-actions/configure-aws-credentials](https://github.com/aws-actions/configure-aws-credentials)
-- AWS - [CloudFormation deploy CLI reference](https://docs.aws.amazon.com/cli/latest/reference/cloudformation/deploy/index.html)
-- Ubuntu / Canonical - [CloudFormation templates with the latest Ubuntu AMI](https://ubuntu.com/aws/docs/aws-how-to/instances/build-cloudformation-templates/)
-- AWS - [EC2 instance user data](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/user-data.html)
-
----
-
-**bongoDev - Learn. Practice. Prove you're ready.**
